@@ -15,7 +15,11 @@ namespace tcmp
 {
 #define DEBUG_GUARD_SIZE 0
 
-	std::atomic<size_t>& total_n_bytes_allocated();
+	inline std::atomic<size_t>& total_n_bytes_allocated()
+	{
+		static std::atomic<size_t> s_total_n_bytes_allocated{ 0 };
+		return s_total_n_bytes_allocated;
+	}
 
 	/// Managed memory on the Device
 	template<class T>
