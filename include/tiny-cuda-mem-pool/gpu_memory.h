@@ -38,6 +38,11 @@ namespace tcmp
 		{
 			resize(size);
 		}
+		GPUMemory(std::vector<T>const& host_data)
+		{
+			resize(host_data.size());
+			copy_from_host(host_data);
+		}
 
 		GPUMemory<T>& operator=(GPUMemory<T>&& other)
 		{
