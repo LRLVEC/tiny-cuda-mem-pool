@@ -10,6 +10,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <memory>
 
 namespace tcmp
 {
