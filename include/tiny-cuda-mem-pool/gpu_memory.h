@@ -22,6 +22,195 @@ namespace tcmp
 		return s_total_n_bytes_allocated;
 	}
 
+	/*
+	 * cuda malloc host data
+	 */
+	template<class T>
+	class CPUMemory
+	{
+	private:
+		T* m_data = nullptr;
+		size_t m_size = 0; // Number of elements
+
+	public:
+		CPUMemory() {}
+		CPUMemory(size_t size)
+		{
+			resize(size);
+		}
+
+		CPUMemory<T>& operator=(CPUMemory<T>&& other)
+		{
+			std::swap(m_data, other.m_data);
+			std::swap(m_size, other.m_size);
+			return *this;
+		}
+
+		CPUMemory(CPUMemory<T>&& other)
+		{
+			*this = std::move(other);
+		}
+
+		// Don't permit copy assignment to prevent performance accidents.
+		// Copy is permitted through an explicit copy constructor.
+		CPUMemory<T>& operator=(const CPUMemory<T>& other) = delete;
+
+		void allocate_memory(size_t n_bytes)
+		{
+			if (n_bytes == 0)
+			{
+				return;
+			}
+			uint8_t* rawptr = nullptr;
+			CUDA_CHECK_THROW(cudaMallocHost(&rawptr, n_bytes));
+			m_data = (T*)(rawptr);
+		}
+
+		void free_memory()
+		{
+			if (!m_data)
+				return;
+
+			uint8_t* rawptr = (uint8_t*)m_data;
+			CUDA_CHECK_THROW(cudaFreeHost(rawptr));
+
+			m_data = nullptr;
+			m_size = 0;
+		}
+
+		/// Frees memory again
+		~CPUMemory()
+		{
+			try
+			{
+				if (m_data)
+				{
+					free_memory();
+					m_size = 0;
+				}
+			}
+			catch (std::runtime_error error)
+			{
+				// Don't need to report on memory-free problems when the driver is shutting down.
+				if (std::string{ error.what() }.find("driver shutting down") == std::string::npos) {
+					std::cerr << "Could not free memory: " << error.what() << std::endl;
+				}
+			}
+		}
+
+		/// Resizes the array to the exact new size, even if it is already larger
+		void resize(const size_t size)
+		{
+			if (m_size != size)
+			{
+				if (m_size)
+				{
+					try
+					{
+						free_memory();
+					}
+					catch (std::runtime_error error)
+					{
+						std::stringstream ss;
+						ss << "Could not free memory: " << error.what();
+						throw std::runtime_error{ ss.str() };
+					}
+				}
+
+				if (size > 0)
+				{
+					try
+					{
+						allocate_memory(size * sizeof(T));
+					}
+					catch (std::runtime_error error)
+					{
+						std::stringstream ss;
+						ss << "Could not allocate memory: " << error.what();
+						throw std::runtime_error{ ss.str() };
+					}
+				}
+
+				m_size = size;
+			}
+		}
+
+		/// Enlarges the array if its size is smaller
+		void enlarge(const size_t size)
+		{
+			if (size > m_size)
+			{
+				resize(size);
+			}
+		}
+
+		/// Sets the memory of the first num_elements to value
+		void memset(const int value, const size_t num_elements, const size_t offset = 0)
+		{
+			if (num_elements + offset > m_size)
+			{
+				std::stringstream ss;
+				ss << "Could not set memory: Number of elements " << num_elements << "+" << offset << " larger than allocated memory " << m_size << ".";
+				throw std::runtime_error{ ss.str() };
+			}
+
+			::memset(m_data + offset, value, num_elements * sizeof(T));
+		}
+
+		/// Sets the memory of the all elements to value
+		void memset(const int value)
+		{
+			memset(value, m_size);
+		}
+
+		T* data() const
+		{
+			return m_data;
+		}
+
+		T& at(size_t idx) const
+		{
+			if (idx > m_size)
+			{
+				std::stringstream ss;
+				ss << "CPUMemory out of bounds: idx=" << idx << " size=" << m_size;
+				throw std::runtime_error{ ss.str() };
+			}
+
+			return m_data[idx];
+		}
+
+		T& operator[](size_t idx) const
+		{
+			return m_data[idx];
+		}
+
+		T& operator[](uint32_t idx) const
+		{
+			return m_data[idx];
+		}
+
+		size_t get_num_elements() const
+		{
+			return m_size;
+		}
+
+		size_t size() const
+		{
+			return get_num_elements();
+		}
+
+		size_t get_bytes() const
+		{
+			return m_size * sizeof(T);
+		}
+
+		size_t bytes() const
+		{
+			return get_bytes();
+		}
+	};
+
 	/// Managed memory on the Device
 	template<class T>
 	class GPUMemory
@@ -345,6 +534,18 @@ namespace tcmp
 			copy_to_host(data.data(), m_size);
 		}
 
+		void copy_to_host(CPUMemory<T>& data) const
+		{
+			if (data.size() < m_size)
+			{
+				std::stringstream ss;
+				ss << "Trying to copy " << m_size << " elements, but CPUMemory size is only " << data.size();
+				throw std::runtime_error{ ss.str() };
+			}
+
+			CUDA_CHECK_THROW(cudaMemcpy(data.data(), m_data, m_size * sizeof(T), cudaMemcpyDeviceToHost));
+		}
+
 		/// Copies size elements from another device array to this one, automatically resizing it
 		void copy_from_device(const GPUMemory<T>& other, const size_t size)
 		{
@@ -411,7 +612,7 @@ namespace tcmp
 			}
 #endif
 			return m_data[idx];
-		}
+			}
 
 		TCMP_HOST_DEVICE T& operator[](uint32_t idx) const
 		{
@@ -422,7 +623,7 @@ namespace tcmp
 			}
 #endif
 			return m_data[idx];
-		}
+			}
 
 		size_t get_num_elements() const
 		{
@@ -443,7 +644,7 @@ namespace tcmp
 		{
 			return get_bytes();
 		}
-	};
+		};
 
 	struct Interval
 	{
@@ -858,4 +1059,4 @@ namespace tcmp
 	void free_gpu_memory_arena(cudaStream_t stream);
 	void free_all_gpu_memory_arenas();
 #undef DEBUG_GUARD_SIZE
-}
+		}
