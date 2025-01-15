@@ -489,6 +489,18 @@ namespace tcmp
 			copy_from_host(data.data(), m_size);
 		}
 
+		void copy_from_host(CPUMemory<T>const& data)
+		{
+			if (data.size() < m_size)
+			{
+				std::stringstream ss;
+				ss << "Trying to copy " << m_size << " elements, but CPUMemory size is only " << data.size();
+				throw std::runtime_error{ ss.str() };
+			}
+
+			CUDA_CHECK_THROW(cudaMemcpy(m_data, data.data(), m_size * sizeof(T), cudaMemcpyHostToDevice));
+		}
+
 		/// Copies num_elements of data from the raw host pointer to the device. Fails if there is not enough space available.
 		void copy_to_host(T* host_data, const size_t num_elements) const
 		{
